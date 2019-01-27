@@ -1,12 +1,20 @@
-function constantArray(dim, val) {
+function generateMultiDimensionalArray(dim, func) {
   if (dim.length === 0) {
-    return val;
+    return func();
   }
   const arr = [];
   for (let i = 0; i < dim[0]; i++) {
-    arr.push(constantArray(dim.slice(1), val));
+    arr.push(generateMultiDimensionalArray(dim.slice(1), func));
   }
   return arr;
+}
+
+function generateMultiDimensionalZeroArray(dim) {
+  return generateMultiDimensionalArray(dim, () => 0);
+}
+
+function generateConstantArray(val, length) {
+  return generateMultiDimensionalArray([length], () => val);
 }
 
 function assign(arr, indices, value) {
@@ -18,50 +26,160 @@ function assign(arr, indices, value) {
   return arr;
 }
 
-function mapRecursive(data, func) {
+function mutateArray(arr, indices, func, value) {
+  if (indices.length === 0) {
+    arr[func](value);
+  } else {
+    mutateArray(arr[indices[0]], indices.slice(1), func, value);
+  }
+}
+
+function multiDimensionalLookup(arr, indices) {
+  if (indices.length === 0) {
+    return arr;
+  } else {
+    return multiDimensionalLookup(arr[indices[0]], indices.slice(1));
+  }
+}
+
+function recursiveMap(data, func) {
   if (!(data instanceof Array)) {
     return func(data);
   }
-  return _.map(data, value => mapRecursive(value, func));
+  return _.map(data, value => recursiveMap(value, func));
 }
 
-class Queen {
-  constructor (dim) {
-    this.position = _.map(dim, val => _.random(0, val - 1));
-  }
+const queen = {
+  create: function (dim) {
+    const self = Object.create(this);
+    if(dim !== this.dim) {
+      this.dim = dim;
+      this.generateAdjacencyList();
+    }
+    self.position = _.map(dim, bound =>_.random(0, bound - 1));
+    return self;
+  },
 
-  step (dim) {
-    const arr = this.generateArray(dim);
-    const aux = constantArray([dim.length], 3);
-    const open  = _.reduce(arr, (sum, obj) => sum + this.calculateTerm(aux, obj.distance, obj.index), 0);
-    const random = _.random(1, open);
-  }
+  generateAdjacencyList: function () {
+    this.adjacencyList = generateMultiDimensionalArray(this.dim, () => []);
+    const position = this.dim.slice();
+    this.generateAdjacencyListAux(position, this.dim.length);
+  },
 
-  calculateTerm (aux, distance, index) {
-    console.log({ distance: distance, index: index} );
-    console.log(aux);
-    aux[index]--;
-    const coefficient = _.reduce(aux, (product, val, i) => product * (i !== index ? val : 1), 1);
-    console.log(coefficient + '\n');
-    return coefficient * distance;
-  }
+  generateAdjacencyListAux: function (position, n) {
+    if (n === 0) {
+      this.generateIndividualList(position);
+    } else {
+      const temp = position[n - 1];
+      while(position[n - 1] > 0) {
+        position[n - 1]--;
+        this.generateAdjacencyListAux(position, n - 1);
+      }
+      position[n - 1] = temp;
+    }
+  },
 
-  generateArray (dim) {
-    return _.sortBy((_.flatten(_.map(dim, (bound, index) => this.generateObjects(bound, index)))), 'distance');
-  }
+  generateIndividualList: function (position) {
+    const distanceToBoundaryArr = _.map(this.dim, (bound, index) => bound - position[index] - 1);
+    for (let i = 1; i < Math.pow(3, this.dim.length); i++) {
+      const directionVector = this.generateDirectionVector(i);
+      const iteratee = function (min, distance, index) {
+        switch (directionVector[index]) {
+          case -1:
+            return Math.min(min, position[index]);
+          case 0:
+            return min;
+          case 1:
+            return Math.min(min, distance);
+        }
+      }
+      const min = _.reduce(distanceToBoundaryArr, iteratee, Infinity);
+      let current  = position;
+      for (let j = 0; j < min; j++) {
+        current = _.map(current, (coordinate, index) => coordinate + directionVector[index]);
+        mutateArray(this.adjacencyList, position, 'push', current);
+      }
+    }
+  },
 
-  generateObjects (bound, index) {
-    const upperDistance = bound - this.position[index] - 1;
-    const lowerDistance = this.position[index];
-    return [{ distance: upperDistance, index: index }, { distance: lowerDistance, index: index }];
+  generateDirectionVector: function (i) {
+    let directionVector = i.toString(3).split('').reverse();
+    directionVector = _.map(directionVector, val => 3/2 * Math.pow(parseInt(val), 2) - 5/2 * parseInt(val));
+    const buffer = generateConstantArray(0, this.dim.length);
+    directionVector = directionVector.concat(buffer);
+    return directionVector;
+  },
+
+  step: function () {
+    const adjacent = multiDimensionalLookup(this.adjacencyList, this.position);
+    const rand = _.random(0, adjacent.length - 1);
+    this.position = adjacent[rand];
+  },
+}
+
+const king = {
+  constructor: function (dim) {
+
   }
 }
 
+const board = {
+  create: function (dim, chessPiece, numberOfPieces) {
+    const self = Object.create(board);
+    self.dim = dim;
+    self.pieces = [];
+    for (let i = 0; i < numberOfPieces; i++) {
+      self.pieces.push(chessPiece.create(dim));
+    }
+    return self;
+  },
+
+  step: function (n) {
+    for (let i = 0; i < n; i++) {
+      for (const piece of this.pieces) {
+        piece.step();
+      }
+    }
+  },
+
+  toArray: function () {
+    const boardRepresentation = generateMultiDimensionalZeroArray(this.dim);
+    const distribution = _.pairs(_.countBy(this.pieces, 'position'));
+    const iteratee = function (val) {
+      let position = val[0].split(',');
+      position = _.map(position, coordinate => Number(coordinate));
+      assign(boardRepresentation, position, val[1]);
+    };
+    _.each(distribution, iteratee);
+    return boardRepresentation;
+  },
+
+  toPercentArray: function () {
+    return recursiveMap(this.toArray(), val => Math.floor(val / this.pieces.length * 100));
+  },
+
+  probabilityCheck: function () {
+    const arr0 = this.toArray();
+    const arr = [];
+    arr[2] = arr0[0][0] + arr0[0][3] + arr0[3][0] + arr0[3][3];
+    arr[1] = arr0[0][1] + arr0[0][2] + arr0[1][3] + arr0[2][3];
+    arr[1] += arr0[3][2] + arr0[3][1] + arr0[2][0] + arr0[1][0];
+    arr[0] = arr0[1][1] + arr0[1][2] + arr0[2][1] + arr0[2][2];
+    return arr;
+  }
+}
+
+const p = 100000;
 const n = 10;
-const temp = new Array(n);
 const dim = [4, 4];
-// console.log(_.pluck(_.map(temp, val => new Queen(dim)), 'position'));
+const b = board.create(dim, queen, p);
+b.step(n);
+console.log(b.toArray());
+console.log(b.probabilityCheck());
 
-// const queen = new Queen(dim);
-// console.log(queen.position);
-// console.log(queen.step(dim));
+// const dim = [4, 4];
+// const q = queen.create(dim);
+// const n = 100;
+// for (let i = 0; i < n; i++) {
+//   q.step();
+// }
